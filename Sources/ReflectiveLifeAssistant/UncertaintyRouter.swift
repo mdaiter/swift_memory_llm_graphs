@@ -83,6 +83,11 @@ final class UncertaintyRouter {
             return .mutate(.inject(after: nextNode.id, nodes: injections, reason: reason))
         }
 
+        // Custom rule: low confidence on company research triggers email scan.
+        if (state.confidence(for: companyResearchKey.erased)?.confidence ?? 1.0) < threshold {
+            return .mutate(.inject(after: "research_company", nodes: [ScanEmailsNodePrep(filter: "Acme")], reason: "Low confidence on company, scan emails"))
+        }
+
         // LLM-driven strategy selection if provided.
         if let llm {
             let prompt = """

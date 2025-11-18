@@ -129,11 +129,24 @@ final class AdaptiveExecutor {
     let context: ExecutionContext
     let mutator: GraphMutator
     let mutationDecider: ((DomainNode, LifeState, GraphConfig) async throws -> GraphMutation?)?
+    let uncertaintyRouter: UncertaintyRouter?
+    let onMutation: ((GraphMutation) -> Void)?
+    let onUncertaintyIntervention: ((String) -> Void)?
 
-    init(context: ExecutionContext, mutator: GraphMutator, mutationDecider: ((DomainNode, LifeState, GraphConfig) async throws -> GraphMutation?)? = nil) {
+    init(
+        context: ExecutionContext,
+        mutator: GraphMutator,
+        mutationDecider: ((DomainNode, LifeState, GraphConfig) async throws -> GraphMutation?)? = nil,
+        uncertaintyRouter: UncertaintyRouter? = nil,
+        onMutation: ((GraphMutation) -> Void)? = nil,
+        onUncertaintyIntervention: ((String) -> Void)? = nil
+    ) {
         self.context = context
         self.mutator = mutator
         self.mutationDecider = mutationDecider
+        self.uncertaintyRouter = uncertaintyRouter
+        self.onMutation = onMutation
+        self.onUncertaintyIntervention = onUncertaintyIntervention
     }
 
     func execute(graph: GraphConfig, inputs: [String: Any] = [:]) async throws -> LifeState {
@@ -170,8 +183,62 @@ final class AdaptiveExecutor {
                     case .none:
                         break
                     }
+                    onMutation?(mutation)
                     mutated = true
                     break // recompute order after mutation
+                }
+
+                // Apply any pending mutations requested by nodes.
+                if !context.pendingMutations.isEmpty {
+                    let mutations = context.pendingMutations
+                    context.pendingMutations.removeAll()
+                    for mutation in mutations {
+                        switch mutation {
+                        case let .inject(after, nodes, reason):
+                            mutableGraph = try await mutator.injectNodes(after: after, nodes: nodes, reason: reason)
+                        case let .prune(nodes, reason):
+                            mutableGraph = try await mutator.pruneNodes(nodes: nodes, reason: reason)
+                        case let .reroute(from, to, reason):
+                            mutableGraph = try await mutator.reroute(from: from, to: to, reason: reason)
+                        case .none:
+                            break
+                        }
+                        onMutation?(mutation)
+                    }
+                    mutated = true
+                    break
+                }
+
+                // Uncertainty routing hook: check next node in order if exists.
+                if let router = uncertaintyRouter,
+                   let nextIndex = order.firstIndex(of: nodeId)?.advanced(by: 1),
+                   nextIndex < order.count,
+                   let nextNode = mutableGraph.nodes.first(where: { $0.id == order[nextIndex] }) {
+                    let decision = try await router.route(state: state, nextNode: nextNode)
+                    switch decision {
+                    case .mutate(let mutation):
+                        switch mutation {
+                        case let .inject(after, nodes, reason):
+                            mutableGraph = try await mutator.injectNodes(after: after, nodes: nodes, reason: reason)
+                        case let .prune(nodes, reason):
+                            mutableGraph = try await mutator.pruneNodes(nodes: nodes, reason: reason)
+                        case let .reroute(from, to, reason):
+                            mutableGraph = try await mutator.reroute(from: from, to: to, reason: reason)
+                        case .none:
+                            break
+                        }
+                        onMutation?(mutation)
+                        onUncertaintyIntervention?("Applied uncertainty mutation for \(nextNode.id)")
+                        mutated = true
+                        break
+                    case .askUser(let msg):
+                        onUncertaintyIntervention?("Ask user: \(msg)")
+                    case .proceedWithCaveat(let msg):
+                        onUncertaintyIntervention?("Proceed with caveat: \(msg)")
+                    case .proceed:
+                        break
+                    }
+                    if mutated { break }
                 }
             }
 

@@ -77,7 +77,7 @@ func runApp() async {
     // Ensure inferred nodes exist in the registry. If the synthesis graph mentions nodes we do not have,
     // fall back to the static graph to avoid missingEdge errors.
     let synthesizedNodeIds = Set(synthesis.config.nodes.map { $0.id })
-    let allowedSpecial: Set<String> = [START, END]
+    let allowedSpecial: Set<String> = [START, END, "REFLECT", "reflect"]
     let expectedNodeIds = Set(registry.catalog().map { $0.id }).union(allowedSpecial)
     let missingInRegistry = synthesizedNodeIds.subtracting(allowedSpecial).subtracting(expectedNodeIds)
     let missingByEdge = synthesis.config.edges.compactMap { edge -> String? in

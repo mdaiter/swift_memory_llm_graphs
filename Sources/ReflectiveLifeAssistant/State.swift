@@ -129,6 +129,32 @@ struct ConfidentValue<T: StateValue & Equatable>: Codable, Equatable, StateValue
     let sources: [String]
 }
 
+struct Attendee: Codable, Equatable, StateValue {
+    let name: String
+    let email: String
+    let role: String
+}
+
+struct MeetingDetails: Codable, Equatable, StateValue {
+    let title: String
+    let time: String
+    let attendees: [Attendee]
+}
+
+struct CompanyResearch: Codable, Equatable, StateValue {
+    let name: String
+    let description: String
+    let stage: String
+    let funding: String
+    let productDetails: String?
+}
+
+struct PersonBio: Codable, Equatable, StateValue {
+    let name: String
+    let headline: String
+    let highlights: [String]
+}
+
 struct NodeMetadata: Codable, Equatable, StateValue {
     let estimatedCost: String?
     let estimatedTimeMs: Int?
@@ -157,3 +183,10 @@ let jobOfferAnalysisKey = StateKey<JobOfferAnalysis>("job_offer_analysis")
 let confidenceMapKey = StateKey<[String: ConfidenceRecord]>("confidence_map")
 let injectionHistoryKey = StateKey<[String: Int]>("injection_history")
 let nodeMetadataKey = StateKey<[String: NodeMetadata]>("node_metadata")
+let meetingDetailsKey = StateKey<MeetingDetails>("meeting_details")
+let companyResearchKey = StateKey<CompanyResearch>("company_research")
+let painPointsKey = StateKey<[String]>("pain_points")
+let talkingPointsKey = StateKey<[String]>("talking_points")
+let competitorAnalysisKey = StateKey<String>("competitor_analysis")
+let caseStudiesKey = StateKey<[String]>("case_studies")
+let personResearchKey = StateKey<[String: PersonBio]>("person_research")
