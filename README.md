@@ -44,6 +44,7 @@ struct FinancialProjectionNode: DomainNode {
 - **GraphQueryBuilder**: LLM-driven graph synthesis from a user task + registered nodes; supports template selection and learning from prior executions.
 - **LearningGraphBuilder**: prompts with past execution history to generate improved graphs.
 - **AdaptiveExecutor/GraphMutator**: runtime graph mutation (inject/prune/reroute nodes) with a simple in-memory mutator to apply changes as execution progresses.
+- **Meeting Prep Demo**: shows runtime mutation + uncertainty routing + adaptive graph control. Run with `MEETING_PREP_DEMO=1 ADAPTIVE_EXECUTION=1 swift run ReflectiveLifeAssistant` and watch the meeting prep flow (mutations on attendee discovery and sales context, low-confidence company research triggering email/message scans, and the final prep doc with stats).
 
 ## Reflection Layers
 - `ReflectionLevel.strategic`: Are we solving the right problem?
