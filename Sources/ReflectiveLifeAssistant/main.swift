@@ -50,17 +50,14 @@ func runApp() async {
     let nodes = makeNodes(now: now)
     registerNodes(registry, nodes: nodes)
 
-    let historyStore = InMemoryExecutionHistoryStore(records: [
-        ExecutionRecord(task: "Plan weekend trip", summary: "Retry for missing budget", outcome: "Failed then fixed", improvements: "Add scan_finances before planning"),
-        ExecutionRecord(task: "Reply urgent email", summary: "Tone issues", outcome: "Needed retries", improvements: "Add infer_style before drafting")
-    ])
+    let memory = ExecutionMemory()
 
     let graphBuilder = GraphBuilder()
+    let evolver = GraphEvolver(llm: llm, nodeRegistry: registry, memory: memory)
     let synthesis: GraphSynthesisResult
     do {
-        // Try learning-driven synthesis first.
-        let learning = LearningGraphBuilder(llm: llm, nodeRegistry: registry, executionHistory: historyStore)
-        synthesis = try await learning.buildGraphForTask(userTask)
+        // Try learning-driven synthesis with memory.
+        synthesis = try await evolver.buildGraphForTask(userTask, context: [userRequestKey.name: userTask])
     } catch let GraphQueryBuilderError.invalidJSON(details) {
         print("⚠️ Graph synthesis parse failed: \(details). Falling back to static graph.")
         synthesis = GraphSynthesisResult(
@@ -164,12 +161,14 @@ func runApp() async {
                 graph: effectiveConfig,
                 inputs: [userRequestKey.name: userTask]
             )
+            recordTrace(memory: memory, task: userTask, graph: effectiveConfig, state: finalState)
             await printResults(finalState: finalState, llm: llm)
         } else {
             let compiled = try graphBuilder.build(config: effectiveConfig, context: context)
             let finalState = try await compiled.invoke(inputs: [
                 userRequestKey.name: userTask
             ])
+            recordTrace(memory: memory, task: userTask, graph: effectiveConfig, state: finalState)
             await printResults(finalState: finalState, llm: llm)
         }
     } catch {
@@ -179,11 +178,28 @@ func runApp() async {
             let finalState = try await compiled.invoke(inputs: [
                 userRequestKey.name: userTask
             ])
+            recordTrace(memory: memory, task: userTask, graph: fallbackGraphConfig(now: now), state: finalState)
             await printResults(finalState: finalState, llm: llm)
         } catch {
             print("Fallback graph execution failed:", error)
         }
     }
+}
+
+private func recordTrace(memory: ExecutionMemory, task: String, graph: GraphConfig, state: LifeState) {
+    let outcome: OutcomeRating = (state[actionPlanSummaryKey] != nil) ? .success : .partial
+    let reflectionReason = state[reflectionReasonKey] ?? ""
+    let trace = ExecutionTrace(
+        taskDescription: task,
+        generatedGraph: graph,
+        actualExecutionPath: state.actionPath,
+        executionTimes: [:],
+        reflectionLoops: reflectionReason.isEmpty ? [] : [(node: "reflect", reason: reflectionReason)],
+        userInterventions: [],
+        finalOutcome: outcome,
+        timestamp: Date()
+    )
+    memory.record(trace)
 }
 
 private func printResults(finalState: LifeState, llm: LLMClient) async {

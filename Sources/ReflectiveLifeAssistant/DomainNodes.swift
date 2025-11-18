@@ -286,7 +286,12 @@ struct ReflectionNode: DomainNode {
 
 struct JobOfferAnalysisNode: DomainNode {
     let id = "job_offer_analysis"
-    let inputRequirements: [AnyStateKey] = [userRequestKey.erased]
+    let inputRequirements: [AnyStateKey] = [
+        userRequestKey.erased,
+        financeOverviewKey.erased,
+        selectedMessagesKey.erased,
+        calendarOverviewKey.erased
+    ]
     let outputKeys: [AnyStateKey] = [jobOfferAnalysisKey.erased]
 
     func execute(state: LifeState, context: ExecutionContext) async throws -> [String: Any] {
