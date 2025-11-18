@@ -43,6 +43,7 @@ struct FinancialProjectionNode: DomainNode {
 - **LLMEvaluationGenerator**: meta-layer that can derive `ReflectionCriteria` from a task description using an LLM.
 - **GraphQueryBuilder**: LLM-driven graph synthesis from a user task + registered nodes; supports template selection and learning from prior executions.
 - **LearningGraphBuilder**: prompts with past execution history to generate improved graphs.
+- **AdaptiveExecutor/GraphMutator**: runtime graph mutation (inject/prune/reroute nodes) with a simple in-memory mutator to apply changes as execution progresses.
 
 ## Reflection Layers
 - `ReflectionLevel.strategic`: Are we solving the right problem?

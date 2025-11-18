@@ -165,4 +165,24 @@ final class ReflectiveLifeAssistantTests: XCTestCase {
         XCTAssertEqual(result.config.nodes.count, 2)
         XCTAssertFalse(result.reasoning.isEmpty)
     }
+
+    func testGraphMutatorInjectsNodes() async throws {
+        let baseNodes: [DomainNode] = [ScanFinancesNode(), TripPlanningNode()]
+        let baseGraph = GraphConfig(
+            nodes: baseNodes,
+            edges: [.linear(from: "scan_finances", to: "plan_trip")],
+            reflectionPoints: [:],
+            entryNode: "scan_finances"
+        )
+        let mutator = InMemoryGraphMutator(graph: baseGraph)
+        _ = try await mutator.injectNodes(after: "plan_trip", nodes: [EmailDraftingNode()], reason: "Need email follow-up")
+        let ids = Set(mutator.graph.nodes.map { $0.id })
+        XCTAssertTrue(ids.contains("draft_email"))
+        XCTAssertTrue(mutator.graph.edges.contains { edge in
+            if case let .linear(from, to) = edge {
+                return from == "plan_trip" && to == "draft_email"
+            }
+            return false
+        })
+    }
 }

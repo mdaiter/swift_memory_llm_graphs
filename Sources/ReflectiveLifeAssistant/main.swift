@@ -120,22 +120,35 @@ func runApp() async {
         evaluationGenerator: LLMEvaluationGenerator(llm: llm)
     )
 
+    let adaptiveEnabled = ProcessInfo.processInfo.environment["ADAPTIVE_EXECUTION"] == "1"
+
     do {
-        let compiled = try graphBuilder.build(config: effectiveConfig, context: context)
-        let finalState = try await compiled.invoke(inputs: [
-            userRequestKey.name: userTask
-        ])
-        print("Action path: \(renderAsciiPath(from: finalState.actionPath))")
-        print("Trip plan summary: \(finalState[tripPlanKey]?.summary ?? "N/A")")
-        print("Drafted replies: \((finalState[draftedRepliesKey] ?? []).prefix(2))")
-        print("Job analysis: \(finalState[jobOfferAnalysisKey]?.recommendation ?? "None")")
-        if let summary = finalState[actionPlanSummaryKey] {
-            print("Action plan summary:\n\(summary)")
-        }
-        print("Reflections: \(finalState[reflectionCountKey] ?? 0)")
-        if ProcessInfo.processInfo.environment["OPENAI_API_KEY"] != nil {
-            let runSummary = try await summarizeRun(llm: llm, state: finalState)
-            print("\nRun summary:\n\(runSummary)")
+        if adaptiveEnabled {
+            print("🧬 Adaptive execution enabled.")
+            let mutator = InMemoryGraphMutator(graph: effectiveConfig)
+            let executor = AdaptiveExecutor(
+                context: context,
+                mutator: mutator,
+                mutationDecider: { node, state, currentGraph in
+                    // Prune email drafting if no messages are available.
+                    if node.id == "load_messages", (state[selectedMessagesKey]?.isEmpty ?? true) {
+                        return .prune(nodes: ["draft_email"], reason: "No messages to draft replies for")
+                    }
+                    // Inject finance scan if we reach job analysis without finance data.
+                    if node.id == "job_offer_analysis", state[financeOverviewKey] == nil {
+                        return .inject(after: node.id, nodes: [ScanFinancesNode()], reason: "Need finance context before job analysis")
+                    }
+                    return GraphMutation.none
+                }
+            )
+            let finalState = try await executor.execute(graph: effectiveConfig)
+            await printResults(finalState: finalState, llm: llm)
+        } else {
+            let compiled = try graphBuilder.build(config: effectiveConfig, context: context)
+            let finalState = try await compiled.invoke(inputs: [
+                userRequestKey.name: userTask
+            ])
+            await printResults(finalState: finalState, llm: llm)
         }
     } catch {
         print("Error executing synthesized graph: \(error). Using fallback graph.")
@@ -144,16 +157,25 @@ func runApp() async {
             let finalState = try await compiled.invoke(inputs: [
                 userRequestKey.name: userTask
             ])
-            print("Action path: \(renderAsciiPath(from: finalState.actionPath))")
-            print("Trip plan summary: \(finalState[tripPlanKey]?.summary ?? "N/A")")
-            print("Drafted replies: \((finalState[draftedRepliesKey] ?? []).prefix(2))")
-            print("Job analysis: \(finalState[jobOfferAnalysisKey]?.recommendation ?? "None")")
-            if let summary = finalState[actionPlanSummaryKey] {
-                print("Action plan summary:\n\(summary)")
-            }
-            print("Reflections: \(finalState[reflectionCountKey] ?? 0)")
+            await printResults(finalState: finalState, llm: llm)
         } catch {
             print("Fallback graph execution failed:", error)
+        }
+    }
+}
+
+private func printResults(finalState: LifeState, llm: LLMClient) async {
+    print("Action path: \(renderAsciiPath(from: finalState.actionPath))")
+    print("Trip plan summary: \(finalState[tripPlanKey]?.summary ?? "N/A")")
+    print("Drafted replies: \((finalState[draftedRepliesKey] ?? []).prefix(2))")
+    print("Job analysis: \(finalState[jobOfferAnalysisKey]?.recommendation ?? "None")")
+    if let summary = finalState[actionPlanSummaryKey] {
+        print("Action plan summary:\n\(summary)")
+    }
+    print("Reflections: \(finalState[reflectionCountKey] ?? 0)")
+    if ProcessInfo.processInfo.environment["OPENAI_API_KEY"] != nil {
+        if let summary = try? await summarizeRun(llm: llm, state: finalState) {
+            print("\nRun summary:\n\(summary)")
         }
     }
 }
