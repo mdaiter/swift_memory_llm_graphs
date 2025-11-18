@@ -220,7 +220,15 @@ private func printResults(finalState: LifeState, llm: LLMClient) async {
 
 let semaphore = DispatchSemaphore(value: 0)
 _Concurrency.Task {
-    await runApp()
+    if ProcessInfo.processInfo.environment["MEETING_PREP_DEMO"] == "1" {
+        do {
+            try await runMeetingPrepDemo()
+        } catch {
+            print("Meeting prep demo error:", error)
+        }
+    } else {
+        await runApp()
+    }
     semaphore.signal()
 }
 semaphore.wait()

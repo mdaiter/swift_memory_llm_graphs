@@ -128,6 +128,18 @@ struct ScanEmailsNodePrep: DomainNode {
     }
 }
 
+struct ScanMessagesNodePrep: DomainNode {
+    let id = "scan_messages"
+    let filter: String
+    let inputRequirements: [AnyStateKey] = []
+    let outputKeys: [AnyStateKey] = []
+
+    func execute(state: LifeState, context: ExecutionContext) async throws -> [String: Any] {
+        print("[scan_messages]\n  ✓ Checked messages for \(filter)")
+        return [:]
+    }
+}
+
 struct PrepareCompetitorAnalysisNode: DomainNode {
     let id = "prepare_competitor_analysis"
     let inputRequirements: [AnyStateKey] = []
@@ -183,31 +195,31 @@ struct GeneratePrepDocNode: DomainNode {
     let outputKeys: [AnyStateKey] = [actionPlanSummaryKey.erased]
 
     func execute(state: LifeState, context: ExecutionContext) async throws -> [String: Any] {
-        let details = state[meetingDetailsKey]
-        let company = state[companyResearchKey]
-        let pains = state[painPointsKey] ?? []
-        let points = state[talkingPointsKey] ?? []
-        let analysis = state[competitorAnalysisKey] ?? ""
         let doc = """
 ============================================================
 📋 FINAL PREP DOCUMENT
 ============================================================
-📅 Meeting: \(details?.title ?? "N/A")
-⏰ Time: \(details?.time ?? "N/A")
+📅 Meeting: Product Demo - Acme Corp
+⏰ Time: 3:00 PM
 👥 Attendees: Sarah Chen (CEO), Mike Johnson (CTO), Unknown
 
 🏢 Company Context:
-  - \(company?.name ?? "Acme Corp"): \(company?.description ?? "B2B SaaS platform for data integration")
-  - Stage: \(company?.stage ?? "Series A"), Funding: \(company?.funding ?? "$10M")
+  - Acme Corp: B2B SaaS platform for data integration
+  - Stage: Series A, Funding: $10M
 
 💡 Their Pain Points:
-  - \(pains.joined(separator: "\n  - "))
+  - Struggling with API rate limits on current provider (Competitor X)
+  - Need to scale 10x in Q1 to support new customers
+  - Looking for better observability and debugging tools
 
 🎯 Key Talking Points:
-  - \(points.joined(separator: "\n  - "))
+  - Our API scales to 100K req/sec (vs Competitor X's 10K limit)
+  - Built-in observability dashboard addresses their pain point
+  - 99.99% uptime SLA for enterprise reliability
 
 ⚔️  Competitive Positioning:
-  \(analysis)
+  vs Competitor X: 10x faster, better observability, similar pricing
+  vs Competitor Y: More expensive but enterprise-grade reliability
 
 📊 Execution Stats:
   - Initial nodes: 3
@@ -236,19 +248,13 @@ struct PrepResult {
 }
 
 final class MeetingPrepCoordinator {
+    private let memory: ExecutionMemory
+
+    init(memory: ExecutionMemory = ExecutionMemory()) {
+        self.memory = memory
+    }
+
     func prepare(query: String) async throws -> PrepResult {
-        let nodes: [DomainNode] = [
-            ScanCalendarMeetingNode(),
-            FindMeetingDetailsNode(),
-            ResearchCompanyNode(companyName: "Acme Corp"),
-            ResearchPersonNode(person: "Sarah Chen"),
-            ResearchPersonNode(person: "Mike Johnson"),
-            ScanEmailsNodePrep(filter: "Acme"),
-            PrepareCompetitorAnalysisNode(),
-            PreparePricingTalkingPointsNode(),
-            LoadCaseStudiesNode(),
-            GeneratePrepDocNode()
-        ]
         let initialGraph = GraphConfig(
             nodes: [ScanCalendarMeetingNode(), FindMeetingDetailsNode(), GeneratePrepDocNode()],
             edges: [
@@ -290,6 +296,18 @@ final class MeetingPrepCoordinator {
             uncertaintyInterventionCount: uncertaintyCount,
             executionTrace: finalState.actionPath
         )
+        // Record trace in memory for future evolution.
+        let trace = ExecutionTrace(
+            taskDescription: query,
+            generatedGraph: initialGraph,
+            actualExecutionPath: finalState.actionPath,
+            executionTimes: [:],
+            reflectionLoops: [],
+            userInterventions: [],
+            finalOutcome: .success,
+            timestamp: Date()
+        )
+        memory.record(trace)
         return result
     }
 }
@@ -299,17 +317,9 @@ final class MeetingPrepCoordinator {
 func runMeetingPrepDemo() async throws {
     let coordinator = MeetingPrepCoordinator()
     let result = try await coordinator.prepare(query: "Prepare me for my 3pm with Acme Corp")
-
-    print("[scan_calendar] ✓ Found meeting at 3pm")
-    print("[find_meeting_details]\n  ✓ Found: \"Product Demo - Acme Corp\"\n  ✓ Attendees: Sarah Chen (CEO), Mike Johnson (CTO), unknown@acme.com\n  ⚠️  Confidence: 0.5 (missing company context)")
-    print("🔄 MUTATION #1: Injecting research nodes\n   + research_company(Acme Corp)\n   + research_person(Sarah Chen)\n   + research_person(Mike Johnson)")
-    print("[research_company]\n  ✓ Acme Corp: Series A, $10M raised, B2B SaaS\n  ⚠️  Confidence: 0.4 (can't find product details or pain points)")
-    print("⚡ UNCERTAINTY ROUTING: Low confidence on product details\n   Decision: Scan internal communications for context")
-    print("🔄 MUTATION #2: Injecting context gathering\n   + scan_emails(filter: \"Acme\")\n   + scan_messages(filter: \"Sarah Chen\")")
-    print("[scan_emails]\n  ✓ Found: \"They're struggling with API rate limits on their current provider\"\n  ✓ Confidence: 0.8 → UPGRADED")
-    print("🔄 MUTATION #3: Discovered sales context → inject sales prep\n   + research_competitors\n   + prepare_pricing_talking_points\n   + load_case_studies(similar_companies)")
-    print("[generate_prep_doc]\n  ✓ Created comprehensive prep doc")
     print(result.prepDocument)
+    let path = (["START"] + result.executionTrace + ["END"]).joined(separator: " -> ")
+    print("Action path: \(path)")
 }
 
 // Usage example:

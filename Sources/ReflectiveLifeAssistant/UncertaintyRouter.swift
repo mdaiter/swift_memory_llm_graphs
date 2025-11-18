@@ -85,7 +85,9 @@ final class UncertaintyRouter {
 
         // Custom rule: low confidence on company research triggers email scan.
         if (state.confidence(for: companyResearchKey.erased)?.confidence ?? 1.0) < threshold {
-            return .mutate(.inject(after: "research_company", nodes: [ScanEmailsNodePrep(filter: "Acme")], reason: "Low confidence on company, scan emails"))
+            print("⚡ UNCERTAINTY ROUTING: Low confidence on product details\n   Decision: Scan internal communications for context")
+            print("🔄 MUTATION #2: Injecting context gathering\n   + scan_emails(filter: \"Acme\")\n   + scan_messages(filter: \"Sarah Chen\")")
+            return .mutate(.inject(after: "research_company", nodes: [ScanEmailsNodePrep(filter: "Acme"), ScanMessagesNodePrep(filter: "Sarah Chen")], reason: "Low confidence on company, scan emails"))
         }
 
         // LLM-driven strategy selection if provided.

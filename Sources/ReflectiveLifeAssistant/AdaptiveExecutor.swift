@@ -65,7 +65,12 @@ final class InMemoryGraphMutator: GraphMutator {
                 // Replace with chain through injected nodes.
                 let first = nodes.first!.id
                 let last = nodes.last!.id
+                var previous = first
                 newEdges.append(.linear(from: from, to: first))
+                for node in nodes.dropFirst() {
+                    newEdges.append(.linear(from: previous, to: node.id))
+                    previous = node.id
+                }
                 newEdges.append(.linear(from: last, to: to))
             default:
                 newEdges.append(edge)
