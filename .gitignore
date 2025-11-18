@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# SwiftPM / Swift build artifacts
+.build/
+.swiftpm/
+.swiftpm/configuration/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+
+# Xcode
+DerivedData/
+xcuserdata/
+*.xcuserdatad/
+*.xccheckout
+*.moved-aside
+
+# Editors/IDE
+.idea/
+.vscode/
+
+# Credentials / misc
+.netrc
+.env
