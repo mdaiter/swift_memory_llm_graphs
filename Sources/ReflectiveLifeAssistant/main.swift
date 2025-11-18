@@ -61,6 +61,13 @@ func runApp() async {
         // Try learning-driven synthesis first.
         let learning = LearningGraphBuilder(llm: llm, nodeRegistry: registry, executionHistory: historyStore)
         synthesis = try await learning.buildGraphForTask(userTask)
+    } catch let GraphQueryBuilderError.invalidJSON(details) {
+        print("⚠️ Graph synthesis parse failed: \(details). Falling back to static graph.")
+        synthesis = GraphSynthesisResult(
+            config: fallbackGraphConfig(now: now),
+            reasoning: "Fallback graph because synthesis failed",
+            estimatedCost: EstimatedCost(timeSeconds: nil, apiCalls: nil, confidence: nil)
+        )
     } catch {
         print("⚠️ Graph synthesis failed (\(error)); falling back to static graph.")
         synthesis = GraphSynthesisResult(
@@ -73,8 +80,9 @@ func runApp() async {
     // Ensure inferred nodes exist in the registry. If the synthesis graph mentions nodes we do not have,
     // fall back to the static graph to avoid missingEdge errors.
     let synthesizedNodeIds = Set(synthesis.config.nodes.map { $0.id })
-    let expectedNodeIds = Set(registry.catalog().map { $0.id })
-    let missingInRegistry = synthesizedNodeIds.subtracting(expectedNodeIds)
+    let allowedSpecial: Set<String> = [START, END]
+    let expectedNodeIds = Set(registry.catalog().map { $0.id }).union(allowedSpecial)
+    let missingInRegistry = synthesizedNodeIds.subtracting(allowedSpecial).subtracting(expectedNodeIds)
     let missingByEdge = synthesis.config.edges.compactMap { edge -> String? in
         switch edge {
         case let .linear(from, to):
@@ -97,8 +105,10 @@ func runApp() async {
     }.compactMap { $0 }
 
     var effectiveConfig = synthesis.config
-    if !missingInRegistry.isEmpty || !missingByEdge.isEmpty {
-        print("⚠️ Synthesized graph references unknown nodes: \(missingInRegistry.union(missingByEdge)) — using fallback graph.")
+    let unknownNodes = missingInRegistry.union(missingByEdge)
+    let filteredUnknown = unknownNodes.subtracting([START, END, "START", "END"])
+    if !filteredUnknown.isEmpty {
+        print("⚠️ Synthesized graph references unknown nodes: \(filteredUnknown) — using fallback graph.")
         effectiveConfig = fallbackGraphConfig(now: now)
     }
 
@@ -122,6 +132,9 @@ func runApp() async {
 
     let adaptiveEnabled = ProcessInfo.processInfo.environment["ADAPTIVE_EXECUTION"] == "1"
 
+    let descriptorMap = Dictionary(uniqueKeysWithValues: registry.catalog().map { ($0.id, $0) })
+    let router = UncertaintyRouter(costAwareness: true, descriptors: descriptorMap, llm: llm)
+
     do {
         if adaptiveEnabled {
             print("🧬 Adaptive execution enabled.")
@@ -138,10 +151,19 @@ func runApp() async {
                     if node.id == "job_offer_analysis", state[financeOverviewKey] == nil {
                         return .inject(after: node.id, nodes: [ScanFinancesNode()], reason: "Need finance context before job analysis")
                     }
+                    // Uncertainty-aware routing hook.
+                    if let next = currentGraph.nodes.first(where: { $0.id == node.id }) {
+                        if case let .mutate(mutation) = try await router.route(state: state, nextNode: next) {
+                            return mutation
+                        }
+                    }
                     return GraphMutation.none
                 }
             )
-            let finalState = try await executor.execute(graph: effectiveConfig)
+            let finalState = try await executor.execute(
+                graph: effectiveConfig,
+                inputs: [userRequestKey.name: userTask]
+            )
             await printResults(finalState: finalState, llm: llm)
         } else {
             let compiled = try graphBuilder.build(config: effectiveConfig, context: context)

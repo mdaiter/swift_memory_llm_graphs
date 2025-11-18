@@ -1,10 +1,28 @@
 import Foundation
+import LangGraph
 
-enum GraphMutation {
+enum GraphMutation: Equatable {
     case inject(after: String, nodes: [DomainNode], reason: String)
     case prune(nodes: [String], reason: String)
     case reroute(from: String, to: String, reason: String)
     case none
+}
+
+extension GraphMutation {
+    static func == (lhs: GraphMutation, rhs: GraphMutation) -> Bool {
+        switch (lhs, rhs) {
+        case (.none, .none):
+            return true
+        case let (.inject(la, lnodes, lr), .inject(ra, rnodes, rr)):
+            return la == ra && lr == rr && lnodes.map { $0.id } == rnodes.map { $0.id }
+        case let (.prune(ln, lr), .prune(rn, rr)):
+            return Set(ln) == Set(rn) && lr == rr
+        case let (.reroute(lf, lt, lr), .reroute(rf, rt, rr)):
+            return lf == rf && lt == rt && lr == rr
+        default:
+            return false
+        }
+    }
 }
 
 protocol GraphMutator {
@@ -118,9 +136,9 @@ final class AdaptiveExecutor {
         self.mutationDecider = mutationDecider
     }
 
-    func execute(graph: GraphConfig) async throws -> LifeState {
+    func execute(graph: GraphConfig, inputs: [String: Any] = [:]) async throws -> LifeState {
         var mutableGraph = graph
-        var state = LifeState()
+        var state = LifeState(inputs)
 
         var visited = Set<String>()
         while true {
@@ -130,13 +148,21 @@ final class AdaptiveExecutor {
             for nodeId in order where !visited.contains(nodeId) {
                 guard let node = mutableGraph.nodes.first(where: { $0.id == nodeId }) else { continue }
                 let updates = try await node.execute(state: state, context: context)
-                state.data.merge(updates) { _, new in new }
+                var merged = state.data
+                merged.merge(updates) { _, new in new }
+                merged[actionPathKey.name, default: []] = (state.actionPath + [nodeId])
+                state = LifeState(merged)
                 visited.insert(nodeId)
 
                 if let mutation = try await mutationDecider?(node, state, mutableGraph) {
                     switch mutation {
                     case let .inject(after, nodes, reason):
                         mutableGraph = try await mutator.injectNodes(after: after, nodes: nodes, reason: reason)
+                        var history = state.injectionHistory
+                        for n in nodes {
+                            history[n.id, default: 0] += 1
+                        }
+                        state.injectionHistory = history
                     case let .prune(nodes, reason):
                         mutableGraph = try await mutator.pruneNodes(nodes: nodes, reason: reason)
                     case let .reroute(from, to, reason):
@@ -156,8 +182,8 @@ final class AdaptiveExecutor {
     }
 }
 
-// Simple BFS-style topological traversal respecting declared edges.
-private func topologicalSort(config: GraphConfig) -> [String] {
+// Simple BFS-style topological traversal respecting declared edges, ignoring START/END placeholders.
+func topologicalSort(config: GraphConfig) -> [String] {
     var order: [String] = []
     var visited: Set<String> = []
     var queue: [String] = [config.entryNode]
@@ -184,9 +210,11 @@ private func topologicalSort(config: GraphConfig) -> [String] {
 
     while !queue.isEmpty {
         let node = queue.removeFirst()
-        guard !visited.contains(node), config.nodes.contains(where: { $0.id == node }) else { continue }
+        if visited.contains(node) { continue }
         visited.insert(node)
-        order.append(node)
+        if node != START && node != END {
+            order.append(node)
+        }
         for neighbor in adjacency[node] ?? [] where !visited.contains(neighbor) {
             queue.append(neighbor)
         }

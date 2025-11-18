@@ -1,7 +1,8 @@
 import Foundation
+import LangGraph
 
 enum GraphQueryBuilderError: Error {
-    case invalidJSON
+    case invalidJSON(String)
     case missingNode(String)
     case missingEntryNode
 }
@@ -49,7 +50,7 @@ struct GraphQueryBuilder {
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let templateValue = json["template"] as? String
         else {
-            throw GraphQueryBuilderError.invalidJSON
+            throw GraphQueryBuilderError.invalidJSON("Template selection JSON malformed: \(response.prefix(200))")
         }
         return GraphTemplate(rawValue: templateValue) ?? .decisionSupport
     }
@@ -147,11 +148,18 @@ struct GraphQueryBuilder {
     }
 
     func parseGraphConfig(_ response: String) throws -> GraphSynthesisResult {
-        guard let data = response.data(using: .utf8) else { throw GraphQueryBuilderError.invalidJSON }
+        guard let data = response.data(using: .utf8) else {
+            throw GraphQueryBuilderError.invalidJSON("Non-UTF8 response")
+        }
+
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let graphJson = json["graph"] as? [String: Any],
-              let nodeIds = graphJson["nodes"] as? [String]
-        else { throw GraphQueryBuilderError.invalidJSON }
+              let nodeIds = graphJson["nodes"] as? [String] else {
+            if let salvaged = try? salvageGraph(response) {
+                return salvaged
+            }
+            throw GraphQueryBuilderError.invalidJSON("Missing graph/nodes in response: \(response.prefix(500))")
+        }
 
         let nodes = try nodeIds.map { try nodeRegistry.resolve($0) }
         let requestedEntry = graphJson["entry_node"] as? String
@@ -225,6 +233,46 @@ struct GraphQueryBuilder {
             config: GraphConfig(nodes: nodes, edges: parsedEdges, reflectionPoints: reflectionPoints, entryNode: entryNode),
             reasoning: reasoning,
             estimatedCost: estimated
+        )
+    }
+}
+
+// MARK: - Salvage non-JSON responses
+
+extension GraphQueryBuilder {
+    private func salvageGraph(_ response: String) throws -> GraphSynthesisResult {
+        let pattern = #""(?:node_id|node)"\s*:\s*"([^"]+)""#
+        let regex = try? NSRegularExpression(pattern: pattern, options: [])
+        let matches = regex?.matches(in: response, range: NSRange(response.startIndex..., in: response)) ?? []
+        let ids = matches.compactMap { match -> String? in
+            guard let range = Range(match.range(at: 1), in: response) else { return nil }
+            return String(response[range])
+        }
+        let uniqueIds = Array(Set(ids)).filter { id in
+            (try? nodeRegistry.resolve(id)) != nil
+        }
+        guard !uniqueIds.isEmpty else {
+            throw GraphQueryBuilderError.invalidJSON("Unable to salvage nodes from response: \(response.prefix(300))")
+        }
+
+        let nodes = try uniqueIds.map { try nodeRegistry.resolve($0) }
+        var edges: [Edge] = []
+        var previous: String? = nil
+        for id in uniqueIds {
+            if let prev = previous {
+                edges.append(.linear(from: prev, to: id))
+            }
+            previous = id
+        }
+        edges.append(.linear(from: uniqueIds.last ?? START, to: END))
+
+        let entry = uniqueIds.first ?? START
+        let config = GraphConfig(nodes: nodes, edges: edges, reflectionPoints: [:], entryNode: entry)
+        let reasoning = "Salvaged graph from non-JSON response."
+        return GraphSynthesisResult(
+            config: config,
+            reasoning: reasoning,
+            estimatedCost: EstimatedCost(timeSeconds: nil, apiCalls: nil, confidence: nil)
         )
     }
 }

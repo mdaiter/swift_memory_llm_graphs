@@ -185,4 +185,102 @@ final class ReflectiveLifeAssistantTests: XCTestCase {
             return false
         })
     }
+
+    func testUncertaintyRouterInjectsOnLowConfidenceFinance() async throws {
+        var state = LifeState()
+        state.setConfidence(for: financeOverviewKey.erased, record: ConfidenceRecord(confidence: 0.4, reason: "No data", sources: ["finance"]))
+        let router = UncertaintyRouter()
+        let decision = try await router.route(state: state, nextNode: JobOfferAnalysisNode())
+        switch decision {
+        case .mutate(let mutation):
+            switch mutation {
+            case .inject(_, let nodes, _):
+                XCTAssertTrue(nodes.contains(where: { $0.id == "scan_finances" }))
+            default:
+                XCTFail("Expected inject mutation")
+            }
+        default:
+            XCTFail("Expected mutation for low confidence")
+        }
+    }
+
+    func testUncertaintyRouterThresholds() async throws {
+        let router = UncertaintyRouter(threshold: 0.6)
+
+        var state1 = LifeState()
+        state1.setConfidence(for: financeOverviewKey.erased, record: ConfidenceRecord(confidence: 0.59, reason: "Partial data", sources: ["bank"]))
+        let decision1 = try await router.route(state: state1, nextNode: JobOfferAnalysisNode())
+        if case .mutate = decision1 {
+            // expected inject
+        } else {
+            XCTFail("Should inject at 0.59 with threshold 0.6")
+        }
+
+        var state2 = LifeState()
+        state2.setConfidence(for: financeOverviewKey.erased, record: ConfidenceRecord(confidence: 0.61, reason: "Good data", sources: ["bank"]))
+        let decision2 = try await router.route(state: state2, nextNode: JobOfferAnalysisNode())
+        XCTAssertEqual(decision2, .proceed)
+
+        var state3 = LifeState()
+        state3.setConfidence(for: financeOverviewKey.erased, record: ConfidenceRecord(confidence: 0.6, reason: "Threshold", sources: ["bank"]))
+        _ = try await router.route(state: state3, nextNode: JobOfferAnalysisNode()) // defined behavior: at threshold proceed
+    }
+
+    func testUncertaintyRouterMultipleInputs() async throws {
+        var state = LifeState()
+        state.setConfidence(for: financeOverviewKey.erased, record: ConfidenceRecord(confidence: 0.4, reason: "Missing accounts", sources: ["bank"]))
+        state.setConfidence(for: calendarOverviewKey.erased, record: ConfidenceRecord(confidence: 0.9, reason: "Full sync", sources: ["gcal"]))
+        state.setConfidence(for: selectedMessagesKey.erased, record: ConfidenceRecord(confidence: 0.7, reason: "Recent", sources: ["inbox"]))
+
+        let router = UncertaintyRouter()
+        let decision = try await router.route(state: state, nextNode: JobOfferAnalysisNode())
+        switch decision {
+        case .mutate(let mutation):
+            if case let .inject(_, nodes, reason) = mutation {
+                XCTAssertEqual(nodes.count, 1)
+                XCTAssertTrue(nodes.contains(where: { $0.id == "scan_finances" }))
+                XCTAssertTrue(reason.contains("finance"))
+            } else {
+                XCTFail("Expected inject mutation")
+            }
+        default:
+            XCTFail("Expected mutation for low finance confidence")
+        }
+    }
+
+    func testUncertaintyRouterMultipleLowInputs() async throws {
+        var state = LifeState()
+        state.setConfidence(for: financeOverviewKey.erased, record: ConfidenceRecord(confidence: 0.3, reason: "No data", sources: []))
+        state.setConfidence(for: selectedMessagesKey.erased, record: ConfidenceRecord(confidence: 0.4, reason: "Old data", sources: ["mail"]))
+        let router = UncertaintyRouter()
+        let decision = try await router.route(state: state, nextNode: JobOfferAnalysisNode())
+        switch decision {
+        case .mutate(let mutation):
+            if case let .inject(_, nodes, _) = mutation {
+                XCTAssertGreaterThanOrEqual(nodes.count, 2)
+                XCTAssertTrue(nodes.contains(where: { $0.id == "scan_finances" }))
+                XCTAssertTrue(nodes.contains(where: { $0.id == "load_messages" }))
+            } else {
+                XCTFail("Expected inject mutation")
+            }
+        default:
+            XCTFail("Expected mutation for multiple low-confidence inputs")
+        }
+    }
+
+    func testUncertaintyRouterInjectionCap() async throws {
+        var state = LifeState()
+        state.setConfidence(for: financeOverviewKey.erased, record: ConfidenceRecord(confidence: 0.3, reason: "Access denied", sources: ["scan_finances"]))
+        state.injectionHistory = ["scan_finances": 2]
+        let router = UncertaintyRouter(maxInjectionAttempts: 2)
+        let decision = try await router.route(state: state, nextNode: JobOfferAnalysisNode())
+        switch decision {
+        case .askUser(let q):
+            XCTAssertTrue(q.lowercased().contains("financial"))
+        case .proceedWithCaveat:
+            break
+        default:
+            XCTFail("Should avoid further injections when cap reached")
+        }
+    }
 }

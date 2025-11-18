@@ -71,6 +71,37 @@ struct LifeState: AgentState {
         get { self[userRequestKey] ?? "" }
         set { self[userRequestKey] = newValue }
     }
+
+    func confidence(for key: AnyStateKey) -> ConfidenceRecord? {
+        self[confidenceMapKey]?[key.name]
+    }
+
+    func minimumConfidence(for keys: [AnyStateKey]) -> Double {
+        let records = keys.compactMap { confidence(for: $0) }
+        guard !records.isEmpty else { return 1.0 }
+        return records.map { $0.confidence }.min() ?? 1.0
+    }
+
+    mutating func setConfidence(for key: AnyStateKey, record: ConfidenceRecord) {
+        var map = self[confidenceMapKey] ?? [:]
+        map[key.name] = record
+        self[confidenceMapKey] = map
+    }
+
+    var injectionHistory: [String: Int] {
+        get { self[injectionHistoryKey] ?? [:] }
+        set { self[injectionHistoryKey] = newValue }
+    }
+
+    var nodeMetadata: [String: NodeMetadata] {
+        get { self[nodeMetadataKey] ?? [:] }
+        set { self[nodeMetadataKey] = newValue }
+    }
+
+    var executedNodes: [String] {
+        get { actionPath }
+        set { actionPath = newValue }
+    }
 }
 
 // MARK: - Domain state models
@@ -83,6 +114,24 @@ struct JobOfferAnalysis: Codable, Equatable, StateValue {
     let highlights: String
     let risks: String
     let recommendation: String
+}
+
+struct ConfidenceRecord: Codable, Equatable, StateValue {
+    let confidence: Double
+    let reason: String
+    let sources: [String]
+}
+
+struct ConfidentValue<T: StateValue & Equatable>: Codable, Equatable, StateValue {
+    let value: T
+    let confidence: Double
+    let reason: String
+    let sources: [String]
+}
+
+struct NodeMetadata: Codable, Equatable, StateValue {
+    let estimatedCost: String?
+    let estimatedTimeMs: Int?
 }
 
 // MARK: - State keys
@@ -105,3 +154,6 @@ let reflectionReasonKey = StateKey<String>("reflection_reason")
 let reflectionLevelKey = StateKey<String>("reflection_level")
 let nextNodeKey = StateKey<String>("next_node")
 let jobOfferAnalysisKey = StateKey<JobOfferAnalysis>("job_offer_analysis")
+let confidenceMapKey = StateKey<[String: ConfidenceRecord]>("confidence_map")
+let injectionHistoryKey = StateKey<[String: Int]>("injection_history")
+let nodeMetadataKey = StateKey<[String: NodeMetadata]>("node_metadata")

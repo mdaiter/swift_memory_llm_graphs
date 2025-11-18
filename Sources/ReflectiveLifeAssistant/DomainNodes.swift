@@ -83,7 +83,14 @@ struct ScanFinancesNode: DomainNode {
             String(format: "$%.0f", amount)
         }
         let summary = "Last 30 days: \(formatter(total)) total, \(formatter(travel)) on travel."
-        return [financeOverviewKey.name: summary]
+        var updates: [String: Any] = [financeOverviewKey.name: summary]
+        var mutable = state
+        mutable.setConfidence(
+            for: financeOverviewKey.erased,
+            record: ConfidenceRecord(confidence: txns.isEmpty ? 0.4 : 0.8, reason: txns.isEmpty ? "No transactions returned" : "Recent transactions available", sources: ["finance"])
+        )
+        updates.merge(mutable.data.filter { $0.key == confidenceMapKey.name }) { _, new in new }
+        return updates
     }
 }
 
@@ -301,6 +308,18 @@ struct JobOfferAnalysisNode: DomainNode {
             risks: String(risks),
             recommendation: String(recommendation)
         )
-        return [jobOfferAnalysisKey.name: analysis]
+        var updates: [String: Any] = [jobOfferAnalysisKey.name: analysis]
+        var mutable = state
+        let inputConfidence = state.minimumConfidence(for: [
+            financeOverviewKey.erased,
+            selectedMessagesKey.erased,
+            calendarOverviewKey.erased
+        ])
+        mutable.setConfidence(
+            for: jobOfferAnalysisKey.erased,
+            record: ConfidenceRecord(confidence: min(inputConfidence, 0.8), reason: "Derived from available signals", sources: ["job_offer_analysis"])
+        )
+        updates.merge(mutable.data.filter { $0.key == confidenceMapKey.name }) { _, new in new }
+        return updates
     }
 }
