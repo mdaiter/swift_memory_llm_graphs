@@ -254,6 +254,15 @@ final class MeetingPrepCoordinator {
         self.memory = memory
     }
 
+    static func newNodes(from mutation: GraphMutation) -> [String] {
+        switch mutation {
+        case let .inject(_, nodes, _):
+            return nodes.map { $0.id }
+        default:
+            return []
+        }
+    }
+
     func prepare(query: String) async throws -> PrepResult {
         let initialGraph = GraphConfig(
             nodes: [ScanCalendarMeetingNode(), FindMeetingDetailsNode(), GeneratePrepDocNode()],
@@ -266,6 +275,8 @@ final class MeetingPrepCoordinator {
             reflectionPoints: [:],
             entryNode: "scan_calendar_meeting"
         )
+        let visualizer = ASCIIGraphVisualizer()
+        var configSnapshot = initialGraph
         let mutator = InMemoryGraphMutator(graph: initialGraph)
         let context = ExecutionContext(
             llm: MockLLMClient(response: "noop"),
@@ -278,13 +289,27 @@ final class MeetingPrepCoordinator {
         var mutationCount = 0
         var uncertaintyCount = 0
         let router = UncertaintyRouter()
+        print("📊 Initial Graph (\(configSnapshot.nodes.count) nodes)")
+        print(visualizer.visualize(config: configSnapshot))
+        print()
         let executor = AdaptiveExecutor(
             context: context,
             mutator: mutator,
             mutationDecider: nil,
             uncertaintyRouter: router,
-            onMutation: { _ in mutationCount += 1 },
-            onUncertaintyIntervention: { _ in uncertaintyCount += 1 }
+            onMutation: { mutation in
+                mutationCount += 1
+                configSnapshot = mutator.graph
+                let newNodes = MeetingPrepCoordinator.newNodes(from: mutation)
+                print("\n🔄 After Mutation #\(mutationCount): \(mutation)")
+                print("   (\(configSnapshot.nodes.count) nodes total)")
+                print(visualizer.visualize(config: configSnapshot, highlight: newNodes))
+                print()
+            },
+            onUncertaintyIntervention: { msg in
+                uncertaintyCount += 1
+                print("\n⚡ UNCERTAINTY ROUTING: \(msg)")
+            }
         )
         let finalState = try await executor.execute(graph: initialGraph, inputs: [userRequestKey.name: query])
         let finalDoc = finalState[actionPlanSummaryKey] ?? "N/A"
