@@ -1,4 +1,4 @@
-# ReflectiveLifeAssistant (Swift)
+# Action Graphs for Swift
 
 A pluggable, reflection-aware action graph framework. It lets you define domain nodes, wire them into declarative graphs, adapt execution at runtime (mutations, uncertainty routing), and evolve graphs from prior runs.
 
