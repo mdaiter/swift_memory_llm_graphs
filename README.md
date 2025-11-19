@@ -1,62 +1,48 @@
-# Reflective Life Assistant (Swift)
+# ReflectiveLifeAssistant (Swift)
 
-This refactor turns the trip-planning/email prototype into a plugin-ready, reflection-driven action framework.
+A pluggable, reflection-aware action graph framework. It lets you define domain nodes, wire them into declarative graphs, adapt execution at runtime (mutations, uncertainty routing), and evolve graphs from prior runs.
 
 ## Core Concepts
-- **DomainNode**: Pluggable units of work. Implement `id`, declare `inputRequirements`/`outputKeys`, and write `execute(state:context:)`.
-- **Typed State**: `LifeState` wraps `TypedState` using `StateKey<T>`/`StateValue` for type-checked access while remaining extensible.
-- **Reflection**: `ReflectionCriteria` + `HierarchicalReflector` provide declarative success/failure checks across strategic/tactical/execution layers.
-- **Graph Builder**: `GraphConfig` + `GraphBuilder` construct executable graphs from configuration (nodes, edges, reflection points, entry node).
 
-## Running the Demo
-```
-OPENAI_API_KEY=sk-... swift run ReflectiveLifeAssistant
-```
-The demo:
-1. Loads emails, infers tone, scans files/calendar/finances.
-2. Plans a Mexico 30th-birthday trip and drafts replies.
-3. Analyzes a job offer (example of a third domain).
-4. Reflects, refines, and produces a life audit summary.
+- **DomainNode**: Units of work with declared inputs/outputs. They run with an `ExecutionContext` (LLM, data clients, mutation hooks) and return state updates/ConfidentValue metadata.
+- **Typed State**: `LifeState` uses typed `StateKey<T>`/`StateValue` accessors (including `ConfidentValue<T>` for uncertainty tracking).
+- **GraphConfig & Builder**: Declarative graph definition (nodes, edges, reflection points, entry). `GraphBuilder` compiles it to an executable graph.
+- **Adaptive Execution**: `AdaptiveExecutor` supports runtime mutations (inject/prune/reroute), pending node-requested mutations, and uncertainty-aware routing.
+- **Uncertainty Routing**: `UncertaintyRouter` inspects confidences, can trigger mutations (e.g., gather more data) or ask for user input.
+- **Graph Synthesis**: `GraphQueryBuilder`/`GraphEvolver` generate/adjust graphs via LLMs and past execution traces; salvage logic for malformed responses.
+- **Execution Memory**: `ExecutionMemory` stores traces (task, path, outcomes) to inform future graph generation.
+- **Visualization**: ASCII graph snapshots during mutations (see meeting prep demo).
 
-## Adding a New Domain
-1. Implement a node:
-```swift
-struct FinancialProjectionNode: DomainNode {
-    let id = "financial_projection"
-    let inputRequirements: [AnyStateKey] = [userRequestKey.erased]
-    let outputKeys: [AnyStateKey] = [StateKey<String>("projection").erased]
+## Structure
 
-    func execute(state: LifeState, context: ExecutionContext) async throws -> [String: Any] {
-        let prompt = "Project monthly cash flow for: \(state[userRequestKey] ?? "")"
-        let summary = try await context.llm.complete(prompt: prompt)
-        return ["projection": summary]
-    }
-}
-```
-2. Add it to a `GraphConfig`’s `nodes`.
-3. Wire it with an `Edge` (linear or keyed) to place it in the flow.
-4. Provide `ReflectionCriteria` if it needs validation or retry policy.
+- `Domain.swift`: `DomainNode`, `ExecutionContext` (with mutation requests).
+- `State.swift`: Typed state, keys, models, confidence tracking.
+- `GraphBuilder.swift`: Compile `GraphConfig` to executable graph; supports linear/parallel/keyed edges.
+- `AdaptiveExecutor.swift`: Executes graphs, applies mutations, integrates `UncertaintyRouter`, tracks action path.
+- `UncertaintyRouter.swift`: Confidence-based routing decisions (inject, ask user, caveat, proceed).
+- `GraphQueryBuilder.swift` & `ExecutionMemory.swift`: LLM-driven graph generation, learning from past traces, fallback graph salvage.
+- `ASCIIGraphVisualizer.swift`: Box-drawing graph rendering with highlights/warnings.
+- `MeetingPrepDemo.swift`: Example graph showcasing mutations, uncertainty routing, ASCII snapshots, and final doc output (toggle with `MEETING_PREP_DEMO=1`).
+- Other domain examples: trip planning, email drafting, job analysis.
 
-## Examples Included
-- **TripPlanningNode** and **EmailDraftingNode**: legacy domains refactored into plugins.
-- **JobOfferAnalysisNode**: sample third domain showing how to add new capabilities without touching the core framework.
-- **LLMEvaluationGenerator**: meta-layer that can derive `ReflectionCriteria` from a task description using an LLM.
-- **GraphQueryBuilder**: LLM-driven graph synthesis from a user task + registered nodes; supports template selection and learning from prior executions.
-- **LearningGraphBuilder**: prompts with past execution history to generate improved graphs.
-- **AdaptiveExecutor/GraphMutator**: runtime graph mutation (inject/prune/reroute nodes) with a simple in-memory mutator to apply changes as execution progresses.
-- **Meeting Prep Demo**: shows runtime mutation + uncertainty routing + adaptive graph control. Run with `MEETING_PREP_DEMO=1 ADAPTIVE_EXECUTION=1 swift run ReflectiveLifeAssistant` and watch the meeting prep flow (mutations on attendee discovery and sales context, low-confidence company research triggering email/message scans, and the final prep doc with stats).
+## Running
 
-## Reflection Layers
-- `ReflectionLevel.strategic`: Are we solving the right problem?
-- `ReflectionLevel.tactical`: Is the current approach viable?
-- `ReflectionLevel.execution`: Is the output good enough?
-Each level returns a `ReflectionResult` (`success`, `refine`, `escalate`, `requestUserInput`) that drives routing via `next_node`.
+- Default life assistant: `swift run ReflectiveLifeAssistant`
+- Meeting prep demo (adaptive + visualization): `MEETING_PREP_DEMO=1 ADAPTIVE_EXECUTION=1 swift run ReflectiveLifeAssistant`
+- Tests: `swift test` (run locally; sandboxed environments may block SwiftPM caches).
 
-## Key Types
-- `StateKey<T>` / `StateValue`: Typed access for state.
-- `GraphConfig`: Declarative graph definition (nodes, edges, reflection points, entry).
-- `ExecutionContext`: Shared services (LLM, calendar, filesystem, finance, message store, evaluation generator).
+## Extending
 
-## Notes
-- Trip/email behavior remains as examples; new domains are added by implementing `DomainNode` only.
-- Routing is data-driven via `Edge.keyed` and reflection-driven `next_node` decisions.
+- Add a node: implement `DomainNode`, declare input/output keys, return updates (and optional `context.requestMutation`).
+- Add uncertainty logic: extend `UncertaintyRouter` rules or feed confidences via `ConfidentValue`.
+- Persist learnings: record `ExecutionTrace` in `ExecutionMemory` and plug into `GraphEvolver`.
+- Visualize: call `ASCIIGraphVisualizer.visualize(config:highlight:)` when graphs change.
+
+## Highlights
+
+- Pluggable nodes; graphs are declarative, not hardcoded flows.
+- Runtime adaptation: graph mutations + uncertainty routing during execution.
+- Typed, confidence-aware state.
+- LLM-assisted graph synthesis with salvage fallback.
+- Execution memory to evolve graphs over time.
+- Built-in ASCII visualization for live graph evolution.
